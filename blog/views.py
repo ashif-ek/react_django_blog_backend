@@ -8,19 +8,23 @@ from django.contrib.auth.hashers import make_password
 from .models import Post
 from .serializers import PostSerializer
 
+
 @api_view(["POST"])
 def register_user(request):
     data = request.data
-    if User.objects.filter(username=data["username"]).exists():
+
+    if User.objects.filter(username=data.get("username")).exists():
         return Response({"error": "Username taken"}, status=400)
 
-    user = User.objects.create(
-        username=data["username"],
-        email=data["email"],
-        password=make_password(data["password"])
+    User.objects.create(
+        username=data.get("username"),
+        email=data.get("email"),
+        password=make_password(data.get("password")),
     )
 
     return Response({"message": "User created"}, status=201)
+
+
 @api_view(["GET", "POST"])
 def post_list_create(request):
     if request.method == "GET":
@@ -28,7 +32,7 @@ def post_list_create(request):
         serializer = PostSerializer(posts, many=True)
         return Response(serializer.data)
 
-    # POST – only authenticated users
+    # POST – requires login
     if not request.user.is_authenticated:
         return Response(
             {"detail": "Authentication required."},
@@ -37,8 +41,9 @@ def post_list_create(request):
 
     serializer = PostSerializer(data=request.data)
     if serializer.is_valid():
-        serializer.save()
+        serializer.save(author=request.user)   # Always attach author
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -50,27 +55,24 @@ def post_detail(request, slug):
         serializer = PostSerializer(post)
         return Response(serializer.data)
 
-    # PUT/DELETE – only authenticated users
+    # PUT/DELETE – requires login
     if not request.user.is_authenticated:
         return Response(
             {"detail": "Authentication required."},
             status=status.HTTP_401_UNAUTHORIZED,
         )
 
+    # Only author can edit/delete
+    if post.author != request.user:
+        return Response({"detail": "Not allowed"}, status=403)
+
     if request.method == "PUT":
         serializer = PostSerializer(post, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        return Response(serializer.errors, status=400)
 
     if request.method == "DELETE":
         post.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
-    if request.method in ["PUT", "DELETE"]:
-    if not request.user.is_authenticated:
-        return Response({"detail": "Auth required"}, status=401)
-
-    if post.author != request.user:
-        return Response({"detail": "Not allowed"}, status=403)
-
+        return Response(status=204)
